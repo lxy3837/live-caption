@@ -510,6 +510,8 @@ class Transcriber:
         self._displayed = ""          # 当前屏幕上显示的字幕
         self._prev_text = ""          # 上一次转录结果（去重用）
         self._last_logged = ""        # 上一次写入日志的文本
+        self._last_log_time = 0       # 上一次写日志的时间戳
+        self._pending_log = ""        # 待写入的日志缓冲区
 
     def start(self):
         if not HAS_WHISPER:
@@ -560,7 +562,7 @@ class Transcriber:
 
         # 参数
         max_buffer_chunks = int(MAX_SPEECH_DURATION / CHUNK_DURATION)
-        transcribe_interval = 5.0       # 每多少秒推演一次（低频 → 日志干净）
+        transcribe_interval = 1.2       # 每多少秒推演一次（屏幕更新频率）
         transcribe_interval_chunks = int(transcribe_interval / CHUNK_DURATION)
         silence_clear_chunks = int(2.5 / CHUNK_DURATION)  # 连续静音多久清空缓冲区
         consecutive_silence = 0
@@ -589,8 +591,11 @@ class Transcriber:
             if consecutive_silence >= silence_clear_chunks and self._audio_buffer:
                 # 最后一次推演，把剩余内容输出
                 self._transcribe_and_stabilize(model, final=True)
-                # 日志分隔线
+                # 日志分隔线（先刷新缓冲区再写分隔线）
                 if self._log_file:
+                    if self._pending_log:
+                        self._log_file.write(self._pending_log)
+                        self._pending_log = ""
                     self._log_file.write("---\n")
                     self._log_file.flush()
                 self._audio_buffer.clear()
@@ -598,6 +603,7 @@ class Transcriber:
                 self._prev_text = ""
                 self._displayed = ""
                 self._last_logged = ""
+                self._last_log_time = time.time()
                 chunk_count_since_transcribe = 0
                 continue
 
@@ -636,35 +642,34 @@ class Transcriber:
             print(f"[识别] 转录错误: {e}")
             return
 
-        # ── 日志记录：LCP 匹配 + 增量输出 ──
+        # ── 日志记录：积累到缓冲区，每 5 秒（或静音）才写入磁盘 ──
         if cur_text.strip() and self._log_file:
             prev = self._last_logged
+            ts = datetime.now().strftime("%H:%M:%S")
             if not prev:
-                ts = datetime.now().strftime("%H:%M:%S")
-                self._log_file.write(f"[{ts}] {cur_text}\n")
-                self._log_file.flush()
+                self._pending_log += f"[{ts}] {cur_text}\n"
                 self._last_logged = cur_text
             else:
-                # 最长公共前缀
                 lcp = 0
                 for a, b in zip(prev, cur_text):
-                    if a == b:
-                        lcp += 1
-                    else:
-                        break
-                # 公共部分 >= 上次的 40% → 视为同一句的延续
+                    if a == b: lcp += 1
+                    else: break
                 if lcp >= len(prev) * 0.4:
                     suffix = cur_text[lcp:]
                     if len(suffix) >= 2:
-                        self._log_file.write(f"      + {suffix.lstrip()}\n")
-                        self._log_file.flush()
+                        self._pending_log += f"      + {suffix.lstrip()}\n"
                     self._last_logged = cur_text
                 else:
-                    # 差异太大（修正/新话题）→ 新行
-                    ts = datetime.now().strftime("%H:%M:%S")
-                    self._log_file.write(f"[{ts}] {cur_text}\n")
-                    self._log_file.flush()
+                    self._pending_log += f"[{ts}] {cur_text}\n"
                     self._last_logged = cur_text
+
+            # 每 5 秒或静音结束时写入磁盘
+            now = time.time()
+            if final or now - self._last_log_time >= 5.0:
+                self._log_file.write(self._pending_log)
+                self._log_file.flush()
+                self._pending_log = ""
+                self._last_log_time = now
         self._prev_text = cur_text
 
         if final:

@@ -530,6 +530,7 @@ class Transcriber:
         if self._log_file:
             if self._pending_log:
                 self._log_file.write(self._pending_log)
+                print(f"[写盘] 退出，{len(self._pending_log)} 字节 → {self._save_path}")
                 self._pending_log = ""
             self._log_file.close()
             self._log_file = None
@@ -667,6 +668,7 @@ class Transcriber:
             if now - self._last_log_time >= 8.0:
                 self._log_file.write(self._pending_log)
                 self._log_file.flush()
+                print(f"[写盘] {len(self._pending_log)} 字节 → {self._save_path}")
                 self._pending_log = ""
                 self._last_log_time = now
         self._prev_text = cur_text

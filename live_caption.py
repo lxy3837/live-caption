@@ -526,7 +526,11 @@ class Transcriber:
         self._running = False
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=5)
+        # 退出前把缓冲区剩余日志写入磁盘
         if self._log_file:
+            if self._pending_log:
+                self._log_file.write(self._pending_log)
+                self._pending_log = ""
             self._log_file.close()
             self._log_file = None
 
@@ -591,13 +595,8 @@ class Transcriber:
             if consecutive_silence >= silence_clear_chunks and self._audio_buffer:
                 # 最后一次推演，把剩余内容输出
                 self._transcribe_and_stabilize(model, final=True)
-                # 日志分隔线（先刷新缓冲区再写分隔线）
-                if self._log_file:
-                    if self._pending_log:
-                        self._log_file.write(self._pending_log)
-                        self._pending_log = ""
-                    self._log_file.write("---\n")
-                    self._log_file.flush()
+                # 日志分隔线（积累到缓冲区，等定时器统一写入）
+                self._pending_log += "---\n"
                 self._audio_buffer.clear()
                 consecutive_silence = 0
                 self._prev_text = ""
@@ -663,9 +662,9 @@ class Transcriber:
                     self._pending_log += f"[{ts}] {cur_text}\n"
                     self._last_logged = cur_text
 
-            # 每 5 秒或静音结束时写入磁盘
+            # 每 8 秒写入磁盘（final 也不破例，统一走定时器）
             now = time.time()
-            if final or now - self._last_log_time >= 5.0:
+            if now - self._last_log_time >= 8.0:
                 self._log_file.write(self._pending_log)
                 self._log_file.flush()
                 self._pending_log = ""

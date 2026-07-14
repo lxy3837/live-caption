@@ -172,7 +172,7 @@ except ImportError:
 # ── UI 默认参数 ───────────────────────────────────────────
 DEFAULT_FONT_SIZE = 28
 DEFAULT_WIN_WIDTH = 900
-DEFAULT_WIN_HEIGHT = 180           # 双行字幕需要更大高度
+DEFAULT_WIN_HEIGHT = 200           # 双行 + GitHub 链接
 DEFAULT_BG_ALPHA = 0.75           # 窗口透明度 (0~1)
 
 
@@ -181,15 +181,17 @@ DEFAULT_BG_ALPHA = 0.75           # 窗口透明度 (0~1)
 # ╚══════════════════════════════════════════════════════════╝
 
 class CaptionOverlay:
-    """无边框、置顶、半透明的悬浮字幕窗口，可拖动。B站风格双行显示。"""
+    """无边框、置顶、半透明的悬浮字幕窗口，可拖动。B站风格双行显示 + 描边字幕。"""
+
+    GITHUB_URL = "https://github.com/lxy3837/live-caption"
 
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Live Caption")
 
         # ── 窗口属性 ──
-        self.root.overrideredirect(True)          # 无边框
-        self.root.attributes('-topmost', True)    # 始终置顶
+        self.root.overrideredirect(True)
+        self.root.attributes('-topmost', True)
         self.root.attributes('-alpha', DEFAULT_BG_ALPHA)
         self.root.configure(bg='#1a1a1a')
 
@@ -209,42 +211,41 @@ class CaptionOverlay:
             family="Microsoft YaHei", size=self.font_size - 4, weight="normal"
         )
 
-        # ── 双行字幕 ──
-        # 上行（上一条字幕，灰色、略小）
-        self.prev_label = tk.Label(
-            self.root,
-            text="",
-            font=self._font_dim,
-            fg="#666666",
-            bg='#1a1a1a',
-            wraplength=DEFAULT_WIN_WIDTH - 60,
-            justify="center",
-            anchor="s",
+        # ── 上行 Canvas（上一条字幕，灰色描边） ──
+        self.prev_canvas = tk.Canvas(
+            self.root, bg='#1a1a1a', highlightthickness=0,
+            height=60,
         )
-        self.prev_label.pack(fill="x", padx=30, pady=(10, 0))
+        self.prev_canvas.pack(fill="x", padx=10, pady=(8, 0))
 
-        # 下行（当前字幕，白色、粗体）
-        self.cur_label = tk.Label(
-            self.root,
-            text="⏳ 正在加载语音模型，请稍候...",
-            font=self._font,
-            fg="#aaaaaa",
-            bg='#1a1a1a',
-            wraplength=DEFAULT_WIN_WIDTH - 60,
-            justify="center",
-            anchor="n",
+        # ── 下行 Canvas（当前字幕，白色描边） ──
+        self.cur_canvas = tk.Canvas(
+            self.root, bg='#1a1a1a', highlightthickness=0,
+            height=80,
         )
-        self.cur_label.pack(fill="x", padx=30, pady=(2, 10))
+        self.cur_canvas.pack(fill="x", padx=10, pady=(2, 0))
+
+        # ── GitHub 链接 ──
+        self.gh_label = tk.Label(
+            self.root,
+            text=f"🔗 {self.GITHUB_URL}",
+            font=tkfont.Font(family="Microsoft YaHei", size=9),
+            fg="#444444",
+            bg='#1a1a1a',
+            cursor="hand2",
+        )
+        self.gh_label.pack(side="bottom", pady=(0, 4))
+        self.gh_label.bind("<Button-1>", self._on_github_click)
 
         # ── 拖动 ──
         self._drag_start_x = 0
         self._drag_start_y = 0
-        for widget in (self.prev_label, self.cur_label, self.root):
+        for widget in (self.prev_canvas, self.cur_canvas, self.gh_label, self.root):
             widget.bind("<Button-1>", self._on_drag_start)
             widget.bind("<B1-Motion>", self._on_drag_move)
 
         # ── 滚轮调字号 ──
-        for widget in (self.prev_label, self.cur_label, self.root):
+        for widget in (self.prev_canvas, self.cur_canvas, self.gh_label, self.root):
             widget.bind("<MouseWheel>", self._on_mousewheel)
 
         # ── 键盘 ──
@@ -255,12 +256,66 @@ class CaptionOverlay:
         self._menu.add_command(label="字号 +", command=self._increase_font)
         self._menu.add_command(label="字号 -", command=self._decrease_font)
         self._menu.add_separator()
+        self._menu.add_command(label=f"GitHub ⭐", command=self._on_github_click)
+        self._menu.add_separator()
         self._menu.add_command(label="退出 (Esc)", command=self.close)
-        for widget in (self.prev_label, self.cur_label, self.root):
+        for widget in (self.prev_canvas, self.cur_canvas, self.gh_label, self.root):
             widget.bind("<Button-3>", self._show_menu)
 
         self._running = True
         self._model_ready = False
+
+    # ── 描边文字绘制 ───────────────────────────────────────
+
+    def _draw_outline_text(self, canvas: tk.Canvas, text: str,
+                           fill_color: str, outline_color: str, font: tkfont.Font):
+        """在 Canvas 上绘制带描边的文字。"""
+        canvas.delete("all")
+        if not text:
+            return
+        w = canvas.winfo_width() or DEFAULT_WIN_WIDTH
+        pad = 20
+
+        # 简单换行：按 canvas 宽度估算每行字符数
+        avg_char_w = font.measure("测")  # 中文字符宽度
+        max_chars = max(1, (w - pad * 2) // avg_char_w)
+        lines = self._wrap_text(text, max_chars)
+        line_h = font.metrics("linespace")
+
+        total_h = len(lines) * line_h
+        y_start = max(0, (canvas.winfo_height() - total_h) // 2)
+
+        offsets = [(-1, -1), (0, -1), (1, -1), (-1, 0),
+                    (1, 0), (-1, 1), (0, 1), (1, 1)]
+        for i, line in enumerate(lines):
+            y = y_start + i * line_h + line_h // 2
+            for dx, dy in offsets:
+                canvas.create_text(w // 2 + dx, y + dy,
+                                   text=line, font=font,
+                                   fill=outline_color, anchor="center")
+            canvas.create_text(w // 2, y,
+                               text=line, font=font,
+                               fill=fill_color, anchor="center")
+
+    @staticmethod
+    def _wrap_text(text: str, max_chars: int) -> list:
+        """简单按字符数换行，尊重已有换行符。"""
+        raw_lines = text.split("\n")
+        result = []
+        for line in raw_lines:
+            while len(line) > max_chars:
+                # 在 max_chars 位置找最近的空格断句
+                cut = max_chars
+                for sep in (" ", "，", "。", "、", "；", "：", "！", "？", ",", "."):
+                    pos = line[:max_chars].rfind(sep)
+                    if pos > max_chars // 2:
+                        cut = pos + 1
+                        break
+                result.append(line[:cut])
+                line = line[cut:].lstrip()
+            if line:
+                result.append(line)
+        return result
 
     # ── 拖动 ──────────────────────────────────────────────
 
@@ -284,18 +339,21 @@ class CaptionOverlay:
             self.font_size = new_size
             self._font.configure(size=self.font_size)
             self._font_dim.configure(size=max(10, self.font_size - 4))
+            self._redraw()
 
     def _increase_font(self):
         if self.font_size < 80:
             self.font_size += 2
             self._font.configure(size=self.font_size)
             self._font_dim.configure(size=max(10, self.font_size - 4))
+            self._redraw()
 
     def _decrease_font(self):
         if self.font_size > 12:
             self.font_size -= 2
             self._font.configure(size=self.font_size)
             self._font_dim.configure(size=max(10, self.font_size - 4))
+            self._redraw()
 
     # ── 右键菜单 ──────────────────────────────────────────
 
@@ -304,6 +362,11 @@ class CaptionOverlay:
             self._menu.tk_popup(event.x_root, event.y_root)
         finally:
             self._menu.grab_release()
+
+    def _on_github_click(self, event=None):
+        """打开 GitHub 链接。"""
+        import webbrowser
+        webbrowser.open(self.GITHUB_URL)
 
     # ── 公开方法 ──────────────────────────────────────────
 
@@ -317,15 +380,54 @@ class CaptionOverlay:
         """必须在主线程调用。双行显示：上行→旧字幕，下行→新字幕。"""
         try:
             if not self._model_ready:
-                # 还没开始监听，可能是加载提示或错误
-                self.cur_label.config(text=text, fg="#ffffff")
+                self._draw_outline_text(
+                    self.cur_canvas, text,
+                    fill_color="#ffffff", outline_color="#222222",
+                    font=self._font,
+                )
                 if "监听" in text:
                     self._model_ready = True
             else:
-                old_cur = self.cur_label.cget("text")
-                if old_cur and text and old_cur != text:
-                    self.prev_label.config(text=old_cur)
-                self.cur_label.config(text=text, fg="#ffffff")
+                # 从 cur_canvas 读取旧文字 → 移到 prev_canvas
+                old_items = self.cur_canvas.find_all()
+                old_text = ""
+                if old_items:
+                    old_text = self.cur_canvas.itemcget(old_items[-1], "text")
+                if old_text and text and old_text != text:
+                    self._draw_outline_text(
+                        self.prev_canvas, old_text,
+                        fill_color="#aaaaaa", outline_color="#222222",
+                        font=self._font_dim,
+                    )
+                self._draw_outline_text(
+                    self.cur_canvas, text,
+                    fill_color="#ffffff", outline_color="#222222",
+                    font=self._font,
+                )
+        except tk.TclError:
+            pass
+
+    def _redraw(self):
+        """字号变化后重绘当前两行字幕。"""
+        try:
+            # 重绘上行
+            items = self.prev_canvas.find_all()
+            if items:
+                txt = self.prev_canvas.itemcget(items[-1], "text")
+                self._draw_outline_text(
+                    self.prev_canvas, txt,
+                    fill_color="#aaaaaa", outline_color="#222222",
+                    font=self._font_dim,
+                )
+            # 重绘下行
+            items = self.cur_canvas.find_all()
+            if items:
+                txt = self.cur_canvas.itemcget(items[-1], "text")
+                self._draw_outline_text(
+                    self.cur_canvas, txt,
+                    fill_color="#ffffff", outline_color="#222222",
+                    font=self._font,
+                )
         except tk.TclError:
             pass
 
@@ -597,9 +699,10 @@ def main():
     print("╠══════════════════════════════════════════════╣")
     print("║  拖动窗口 -> 调整字幕位置                   ║")
     print("║  滚轮     -> 调节字号                       ║")
-    print("║  右键     -> 菜单（字号/退出）              ║")
+    print("║  右键     -> 菜单（字号/GitHub/退出）       ║")
     print("║  Esc      -> 退出                           ║")
     print("╠══════════════════════════════════════════════╣")
+    print(f"║  GitHub   -> https://github.com/lxy3837/live-caption")
     print(f"║  字幕记录 -> {os.path.basename(save_path)}")
     print("╚══════════════════════════════════════════════╝")
 

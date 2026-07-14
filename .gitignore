@@ -1,0 +1,27 @@
+# Whisper 模型文件（太大，不提交）
+models/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# 字幕记录文件
+captions_*.txt
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 环境变量
+.env

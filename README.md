@@ -69,4 +69,4 @@ LANGUAGE = None        # None=自动检测, "zh"=中文, "en"=英文
 
 ## License
 
-MIT —— 随便用，实训过了记得请我喝奶茶。
+MIT

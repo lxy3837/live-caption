@@ -19,15 +19,20 @@ import queue
 import time
 import sys
 import os
+import warnings
 from datetime import datetime
 import numpy as np
 import tkinter as tk
 from tkinter import font as tkfont, messagebox
 
+# ── 抑制 soundcard 录制抖动警告（模型加载期间正常现象）───
+warnings.filterwarnings("ignore", module=r"soundcard\..*")
+
 # ── 模型下载目录（脚本所在目录下的 models 文件夹）─────────
 os.environ["HF_HOME"] = os.path.join(os.path.dirname(
     os.path.abspath(__file__)), "models")
 os.environ["HUGGINGFACE_HUB_CACHE"] = os.environ["HF_HOME"]
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"  # 国内镜像，不用翻墙
 
 # ── 音频捕获 ──────────────────────────────────────────────
 try:
@@ -45,14 +50,13 @@ except ImportError:
 
 # ── 配置 ──────────────────────────────────────────────────
 SAMPLE_RATE = 16000               # 音频采样率
-CHUNK_DURATION = 0.8              # 每次采集的音频长度（秒）
+CHUNK_DURATION = 0.5              # 每次采集的音频长度（秒），越小响应越快
 SILENCE_THRESHOLD = 0.008         # RMS 能量阈值，低于此值视为静音
-SILENCE_GAP = 1.2                 # 连续静音多少秒后认为一句话结束
-MAX_SPEECH_DURATION = 8.0         # 单段语音最长秒数（防止内存暴涨）
-MODEL_SIZE = "small"              # tiny / base / small / medium / large
-                                  # small 是速度与准确率的平衡选择
-DEVICE = "cpu"                    # cpu 或 cuda（需要 NVIDIA GPU + CUDA）
-COMPUTE_TYPE = "int8"             # int8 (CPU) / float16 (GPU) / int8_float16
+SILENCE_GAP = 0.6                 # 连续静音多少秒后认为一句话结束（越小延迟越低）
+MAX_SPEECH_DURATION = 5.0         # 单段语音最长秒数
+MODEL_SIZE = "base"               # tiny(最快)/base(快)/small(均衡)/medium(准)/large(最准)
+DEVICE = "cuda"                    # cpu 或 cuda
+COMPUTE_TYPE = "float16"          # int8 (CPU) / float16 (GPU) / int8_float16
 LANGUAGE = None                   # None=自动检测, "zh"=中文, "en"=英文
 
 # ── UI 默认参数 ───────────────────────────────────────────
@@ -95,9 +99,9 @@ class CaptionOverlay:
         # ── 字幕标签（全窗口填充） ──
         self.label = tk.Label(
             self.root,
-            text="🎤 正在监听扬声器...",
+            text="⏳ 正在加载语音模型，请稍候...",
             font=self._font,
-            fg="white",
+            fg="#aaaaaa",
             bg='#1a1a1a',
             wraplength=DEFAULT_WIN_WIDTH - 60,
             justify="center",
@@ -180,7 +184,7 @@ class CaptionOverlay:
     def _apply_text(self, text: str):
         """必须在主线程调用。"""
         try:
-            self.label.config(text=text)
+            self.label.config(text=text, fg="white")
         except tk.TclError:
             pass
 
@@ -303,6 +307,7 @@ class Transcriber:
             self._on_text(f"❌ 模型加载失败: {e}")
             return
         print("[识别] 模型就绪，开始监听...")
+        self._on_text("🎤 正在监听中...")
 
         silence_limit = int(SILENCE_GAP / CHUNK_DURATION)
         max_chunks = int(MAX_SPEECH_DURATION / CHUNK_DURATION)

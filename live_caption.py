@@ -560,7 +560,7 @@ class Transcriber:
 
         # 参数
         max_buffer_chunks = int(MAX_SPEECH_DURATION / CHUNK_DURATION)
-        transcribe_interval = 1.2       # 每多少秒推演一次
+        transcribe_interval = 5.0       # 每多少秒推演一次（低频 → 日志干净）
         transcribe_interval_chunks = int(transcribe_interval / CHUNK_DURATION)
         silence_clear_chunks = int(2.5 / CHUNK_DURATION)  # 连续静音多久清空缓冲区
         consecutive_silence = 0

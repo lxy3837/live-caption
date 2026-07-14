@@ -701,7 +701,7 @@ def main():
     W = f"{ESC}[1;37m"    # 亮白
     Y = f"{ESC}[1;33m"    # 亮黄
     R = f"{ESC}[0m"       # 重置
-    BW = 56                # 内框视觉宽度（加宽以容纳大字）
+    BW = 62                # 内框视觉宽度（CAPTION 行最宽 59）
 
     _ANSI = re.compile(r'\x1b\[[0-9;]*m')
 

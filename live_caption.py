@@ -636,28 +636,35 @@ class Transcriber:
             print(f"[识别] 转录错误: {e}")
             return
 
-        # ── 日志记录：只记增量（新增部分），不重复不丢字 ──
+        # ── 日志记录：LCP 匹配 + 增量输出 ──
         if cur_text.strip() and self._log_file:
-            prev_log = self._last_logged
-            if not prev_log:
-                # 全新一句话
+            prev = self._last_logged
+            if not prev:
                 ts = datetime.now().strftime("%H:%M:%S")
                 self._log_file.write(f"[{ts}] {cur_text}\n")
                 self._log_file.flush()
                 self._last_logged = cur_text
-            elif cur_text.startswith(prev_log):
-                # 在上次基础上追加 → 只写新增部分
-                new_part = cur_text[len(prev_log):]
-                if len(new_part) >= 2:  # 新增 >= 2 字才写
-                    self._log_file.write(f"      + {new_part.lstrip()}\n")
+            else:
+                # 最长公共前缀
+                lcp = 0
+                for a, b in zip(prev, cur_text):
+                    if a == b:
+                        lcp += 1
+                    else:
+                        break
+                # 公共部分 >= 上次的 40% → 视为同一句的延续
+                if lcp >= len(prev) * 0.4:
+                    suffix = cur_text[lcp:]
+                    if len(suffix) >= 2:
+                        self._log_file.write(f"      + {suffix.lstrip()}\n")
+                        self._log_file.flush()
+                    self._last_logged = cur_text
+                else:
+                    # 差异太大（修正/新话题）→ 新行
+                    ts = datetime.now().strftime("%H:%M:%S")
+                    self._log_file.write(f"[{ts}] {cur_text}\n")
                     self._log_file.flush()
                     self._last_logged = cur_text
-            else:
-                # 内容完全变了（新话题/修正）→ 新行
-                ts = datetime.now().strftime("%H:%M:%S")
-                self._log_file.write(f"[{ts}] {cur_text}\n")
-                self._log_file.flush()
-                self._last_logged = cur_text
         self._prev_text = cur_text
 
         if final:

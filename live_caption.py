@@ -635,19 +635,19 @@ class Transcriber:
             return
 
         # ── 基于 word timestamp 的增量输出 ──
-        # 只取 timestamp > _last_word_end 的新词
+        # 只取 timestamp > _last_word_end 的新词（保留原始空格格式）
         new_words = []
         for seg in segments:
             if seg.words:
                 for w in seg.words:
-                    if w.end > self._last_word_end and w.word.strip():
-                        new_words.append(w.word.strip())
+                    if w.end > self._last_word_end and w.word:
+                        new_words.append(w.word)
 
         if not new_words:
             return
 
-        cur_text = _to_simplified("".join(new_words))
-        if not cur_text.strip():
+        cur_text = _to_simplified("".join(new_words).strip())
+        if not cur_text:
             return
 
         self._emit(cur_text)
@@ -675,6 +675,8 @@ class Transcriber:
             self._log_file.write("---\n")
             self._log_file.flush()
             self._pending_log = ""
+            # 句子结束 → 屏幕回到监听状态
+            self._on_text("🎤 正在监听中...")
 
 
 # ╔══════════════════════════════════════════════════════════╗

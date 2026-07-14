@@ -588,6 +588,10 @@ class Transcriber:
             if consecutive_silence >= silence_clear_chunks and self._audio_buffer:
                 # 最后一次推演，把剩余内容输出
                 self._transcribe_and_stabilize(model, final=True)
+                # 日志分隔线
+                if self._log_file:
+                    self._log_file.write("---\n")
+                    self._log_file.flush()
                 self._audio_buffer.clear()
                 consecutive_silence = 0
                 self._prev_text = ""
@@ -654,18 +658,13 @@ class Transcriber:
             self._displayed = cur_text
         # 否则：只是 Whisper 反复推演出轻微变化的同一内容，跳过不更新屏幕
 
-        # 日志记录：文本真正变化时写入
-        if cur_text != self._prev_text and self._log_file:
-            ts = datetime.now().strftime("%H:%M:%S")
-            self._log_file.write(f"[{ts}] {cur_text}\n")
-            self._log_file.flush()
-
-        self._prev_text = cur_text
-
     def _emit(self, text: str):
-        """输出字幕到屏幕和控制台（日志写入在调用方处理去重）。"""
+        """输出字幕到屏幕、控制台和日志文件。"""
         ts = datetime.now().strftime("%H:%M:%S")
         print(f"[字幕] [{ts}] {text}")
+        if self._log_file:
+            self._log_file.write(f"[{ts}] {text}\n")
+            self._log_file.flush()
         self._on_text(text)
 
 

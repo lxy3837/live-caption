@@ -509,6 +509,7 @@ class Transcriber:
         self._audio_buffer = []       # 最近 N 秒的音频帧
         self._displayed = ""          # 当前屏幕上显示的字幕
         self._prev_text = ""          # 上一次转录结果（去重用）
+        self._pending_log = ""        # 待写入日志的最终文本
 
     def start(self):
         if not HAS_WHISPER:
@@ -588,14 +589,17 @@ class Transcriber:
             if consecutive_silence >= silence_clear_chunks and self._audio_buffer:
                 # 最后一次推演，把剩余内容输出
                 self._transcribe_and_stabilize(model, final=True)
-                # 日志分隔线
-                if self._log_file:
+                # 日志：每段话结束时写入最终版本 + 分隔线
+                if self._log_file and self._pending_log:
+                    ts = datetime.now().strftime("%H:%M:%S")
+                    self._log_file.write(f"[{ts}] {self._pending_log}\n")
                     self._log_file.write("---\n")
                     self._log_file.flush()
                 self._audio_buffer.clear()
                 consecutive_silence = 0
                 self._prev_text = ""
                 self._displayed = ""
+                self._pending_log = ""
                 chunk_count_since_transcribe = 0
                 continue
 
@@ -659,12 +663,10 @@ class Transcriber:
         # 否则：只是 Whisper 反复推演出轻微变化的同一内容，跳过不更新屏幕
 
     def _emit(self, text: str):
-        """输出字幕到屏幕、控制台和日志文件。"""
+        """输出字幕到屏幕、控制台；暂存文本供结束时写入日志。"""
         ts = datetime.now().strftime("%H:%M:%S")
         print(f"[字幕] [{ts}] {text}")
-        if self._log_file:
-            self._log_file.write(f"[{ts}] {text}\n")
-            self._log_file.flush()
+        self._pending_log = text          # 暂存最终版，不立刻写
         self._on_text(text)
 
 

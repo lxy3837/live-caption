@@ -636,12 +636,24 @@ class Transcriber:
             print(f"[识别] 转录错误: {e}")
             return
 
-        # ── 日志记录：只记有意义的变化，跳过微小增量 ──
+        # ── 日志记录：只记增量（新增部分），不重复不丢字 ──
         if cur_text.strip() and self._log_file:
             prev_log = self._last_logged
-            delta = len(cur_text) - len(prev_log) if prev_log else 999
-            # 条件：全新内容 OR 增长 >= 6 字 OR 不等于上次
-            if not prev_log or delta >= 6 or not cur_text.startswith(prev_log):
+            if not prev_log:
+                # 全新一句话
+                ts = datetime.now().strftime("%H:%M:%S")
+                self._log_file.write(f"[{ts}] {cur_text}\n")
+                self._log_file.flush()
+                self._last_logged = cur_text
+            elif cur_text.startswith(prev_log):
+                # 在上次基础上追加 → 只写新增部分
+                new_part = cur_text[len(prev_log):]
+                if len(new_part) >= 2:  # 新增 >= 2 字才写
+                    self._log_file.write(f"      + {new_part.lstrip()}\n")
+                    self._log_file.flush()
+                    self._last_logged = cur_text
+            else:
+                # 内容完全变了（新话题/修正）→ 新行
                 ts = datetime.now().strftime("%H:%M:%S")
                 self._log_file.write(f"[{ts}] {cur_text}\n")
                 self._log_file.flush()

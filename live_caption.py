@@ -506,9 +506,9 @@ class Transcriber:
         self._running = False
         self._thread = None
         # 滑动窗口状态
-        self._audio_buffer = []        # 最近 N 秒的音频帧
-        self._last_word_end = -1.0     # 最后已输出词的结束时间（word-level 去重）
-        self._pending_log = ""         # 待写入日志的最终文本
+        self._audio_buffer = []       # 最近 N 秒的音频帧
+        self._displayed = ""          # 当前屏幕上显示的字幕
+        self._prev_text = ""          # 上一次转录结果（去重用）
 
     def start(self):
         if not HAS_WHISPER:
@@ -523,7 +523,6 @@ class Transcriber:
         self._running = False
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=5)
-        self._flush_log()           # 退出前写最后一句话
         if self._log_file:
             self._log_file.close()
             self._log_file = None
@@ -589,10 +588,14 @@ class Transcriber:
             if consecutive_silence >= silence_clear_chunks and self._audio_buffer:
                 # 最后一次推演，把剩余内容输出
                 self._transcribe_and_stabilize(model, final=True)
-                self._flush_log()
+                # 日志分隔线
+                if self._log_file:
+                    self._log_file.write("---\n")
+                    self._log_file.flush()
                 self._audio_buffer.clear()
                 consecutive_silence = 0
-                self._last_word_end = -1.0
+                self._prev_text = ""
+                self._displayed = ""
                 chunk_count_since_transcribe = 0
                 continue
 
@@ -606,14 +609,10 @@ class Transcriber:
                 chunk_count_since_transcribe = 0
                 self._transcribe_and_stabilize(model, final=False)
 
-        # 退出前最后一次推演 + 刷盘
-        if self._audio_buffer:
-            self._transcribe_and_stabilize(model, final=True)
-        self._flush_log()
         print("[识别] 线程已退出")
 
     def _transcribe_and_stabilize(self, model, final: bool):
-        """转录缓冲区，通过 word-level timestamp 跟踪解码器输出新词。"""
+        """转录当前缓冲区，用 local agreement 输出稳定部分。"""
         if len(self._audio_buffer) < 3:
             return
         audio = np.concatenate(self._audio_buffer)
@@ -622,7 +621,6 @@ class Transcriber:
                 audio,
                 beam_size=5,
                 language=LANGUAGE,
-                word_timestamps=True,
                 vad_filter=True,
                 vad_parameters=dict(
                     threshold=0.5,
@@ -630,53 +628,48 @@ class Transcriber:
                     min_silence_duration_ms=200,
                 ),
             )
+            cur_text = " ".join(seg.text.strip() for seg in segments)
+            cur_text = _to_simplified(cur_text)     # 繁体→简体
         except Exception as e:
             print(f"[识别] 转录错误: {e}")
             return
 
-        # ── 基于 word timestamp 的增量输出 ──
-        # 只取 timestamp > _last_word_end 的新词（保留原始空格格式）
-        new_words = []
-        for seg in segments:
-            if seg.words:
-                for w in seg.words:
-                    if w.end > self._last_word_end and w.word:
-                        new_words.append(w.word)
+        # ── 日志记录：每一次 decoder 输出都写（不受显示去重影响）──
+        if cur_text.strip() and cur_text != self._prev_text and self._log_file:
+            ts = datetime.now().strftime("%H:%M:%S")
+            self._log_file.write(f"[{ts}] {cur_text}\n")
+            self._log_file.flush()
+        self._prev_text = cur_text
 
-        if not new_words:
+        if final:
+            # 最后一次：直接输出全部
+            if cur_text.strip():
+                self._emit(cur_text)
             return
 
-        cur_text = _to_simplified("".join(new_words).strip())
-        if not cur_text:
+        if not cur_text.strip():
             return
 
-        self._emit(cur_text)
-        # 更新"已输出到此为止"的时间线
-        for seg in segments:
-            if seg.words:
-                self._last_word_end = max(self._last_word_end,
-                                          max(w.end for w in seg.words))
+        # ── 智能去重：只在内容真正增加时才更新屏幕 ──
+        if not self._displayed:
+            # 第一句，直接显示
+            self._emit(cur_text)
+            self._displayed = cur_text
+        elif len(cur_text) > len(self._displayed) + 2:
+            # 新内容比已显示的长 → 有新增内容
+            self._emit(cur_text)
+            self._displayed = cur_text
+        elif cur_text not in self._displayed:
+            # 内容完全不同 → 新的一句话
+            self._emit(cur_text)
+            self._displayed = cur_text
+        # 否则：只是 Whisper 反复推演出轻微变化的同一内容，跳过不更新屏幕
 
     def _emit(self, text: str):
-        """输出字幕到屏幕、控制台；累积当前句子的完整文本。"""
+        """输出字幕到屏幕和控制台（仅显示，不写日志）。"""
         ts = datetime.now().strftime("%H:%M:%S")
-
-        # 累积日志文本（word-level 保证无重复，直接拼接）
-        self._pending_log = (self._pending_log + text) if self._pending_log else text
-
         print(f"[字幕] [{ts}] {text}")
-        self._on_text(self._pending_log)      # 屏幕显示完整句子
-
-    def _flush_log(self):
-        """强制把当前暂存的句子写入日志（静音/退出时调用）。"""
-        if self._log_file and self._pending_log:
-            ts = datetime.now().strftime("%H:%M:%S")
-            self._log_file.write(f"[{ts}] {self._pending_log}\n")
-            self._log_file.write("---\n")
-            self._log_file.flush()
-            self._pending_log = ""
-            # 句子结束 → 屏幕回到监听状态
-            self._on_text("🎤 正在监听中...")
+        self._on_text(text)
 
 
 # ╔══════════════════════════════════════════════════════════╗

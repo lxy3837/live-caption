@@ -509,6 +509,7 @@ class Transcriber:
         self._audio_buffer = []       # 最近 N 秒的音频帧
         self._displayed = ""          # 当前屏幕上显示的字幕
         self._prev_text = ""          # 上一次转录结果（去重用）
+        self._last_logged = ""        # 上一次写入日志的文本
 
     def start(self):
         if not HAS_WHISPER:
@@ -596,6 +597,7 @@ class Transcriber:
                 consecutive_silence = 0
                 self._prev_text = ""
                 self._displayed = ""
+                self._last_logged = ""
                 chunk_count_since_transcribe = 0
                 continue
 
@@ -634,11 +636,16 @@ class Transcriber:
             print(f"[识别] 转录错误: {e}")
             return
 
-        # ── 日志记录：每一次 decoder 输出都写（不受显示去重影响）──
-        if cur_text.strip() and cur_text != self._prev_text and self._log_file:
-            ts = datetime.now().strftime("%H:%M:%S")
-            self._log_file.write(f"[{ts}] {cur_text}\n")
-            self._log_file.flush()
+        # ── 日志记录：只记有意义的变化，跳过微小增量 ──
+        if cur_text.strip() and self._log_file:
+            prev_log = self._last_logged
+            delta = len(cur_text) - len(prev_log) if prev_log else 999
+            # 条件：全新内容 OR 增长 >= 6 字 OR 不等于上次
+            if not prev_log or delta >= 6 or not cur_text.startswith(prev_log):
+                ts = datetime.now().strftime("%H:%M:%S")
+                self._log_file.write(f"[{ts}] {cur_text}\n")
+                self._log_file.flush()
+                self._last_logged = cur_text
         self._prev_text = cur_text
 
         if final:

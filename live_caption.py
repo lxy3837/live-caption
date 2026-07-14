@@ -550,7 +550,8 @@ class Transcriber:
         print("[识别] （首次运行会自动下载模型，约 1-2 GB，请稍候）")
         try:
             model = WhisperModel(MODEL_SIZE, device=DEVICE,
-                                 compute_type=COMPUTE_TYPE)
+                                 compute_type=COMPUTE_TYPE,
+                                 download_root=MODEL_DIR)
         except Exception as e:
             print(f"[识别] 模型加载失败: {e}")
             self._on_text(f"❌ 模型加载失败: {e}")

@@ -67,6 +67,10 @@ LANGUAGE = None        # None=自动检测, "zh"=中文, "en"=英文
 └── models/            # Whisper 模型（自动下载）
 ```
 
+## 反馈 & 贡献
+
+有问题、有建议、想吐槽？欢迎提 [Issue](https://github.com/lxy3837/live-caption/issues)，看到了会回。
+
 ## License
 
 MIT

@@ -509,9 +509,7 @@ class Transcriber:
         self._audio_buffer = []       # 最近 N 秒的音频帧
         self._displayed = ""          # 当前屏幕上显示的字幕
         self._prev_text = ""          # 上一次转录结果（去重用）
-        self._last_logged = ""        # 上一次写入日志的文本
-        self._last_log_time = 0       # 上一次写日志的时间戳
-        self._pending_log = ""        # 待写入的日志缓冲区
+        self._last_screen_logged = "" # 上一次写入日志的屏幕内容
 
     def start(self):
         if not HAS_WHISPER:
@@ -526,12 +524,7 @@ class Transcriber:
         self._running = False
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=5)
-        # 退出前把缓冲区剩余日志写入磁盘
         if self._log_file:
-            if self._pending_log:
-                self._log_file.write(self._pending_log)
-                print(f"[写盘] 退出，{len(self._pending_log)} 字节 → {self._save_path}")
-                self._pending_log = ""
             self._log_file.close()
             self._log_file = None
 
@@ -572,6 +565,8 @@ class Transcriber:
         silence_clear_chunks = int(2.5 / CHUNK_DURATION)  # 连续静音多久清空缓冲区
         consecutive_silence = 0
         chunk_count_since_transcribe = 0
+        log_write_chunks = int(5.0 / CHUNK_DURATION)   # 每 5 秒写一次日志
+        chunk_count_since_log = 0
 
         while self._running:
             try:
@@ -596,20 +591,33 @@ class Transcriber:
             if consecutive_silence >= silence_clear_chunks and self._audio_buffer:
                 # 最后一次推演，把剩余内容输出
                 self._transcribe_and_stabilize(model, final=True)
-                # 日志分隔线（积累到缓冲区，等定时器统一写入）
-                self._pending_log += "---\n"
+                # 日志分隔线
+                if self._log_file and self._last_screen_logged:
+                    self._log_file.write("---\n")
+                    self._log_file.flush()
                 self._audio_buffer.clear()
                 consecutive_silence = 0
                 self._prev_text = ""
                 self._displayed = ""
-                self._last_logged = ""
-                self._last_log_time = time.time()
+                self._last_screen_logged = ""
                 chunk_count_since_transcribe = 0
                 continue
 
             # 限制缓冲区大小
             if len(self._audio_buffer) > max_buffer_chunks:
                 self._audio_buffer = self._audio_buffer[-max_buffer_chunks:]
+
+            # ── 每 5 秒写盘：把屏幕当前内容写入日志 ──
+            chunk_count_since_log += 1
+            if chunk_count_since_log >= log_write_chunks and self._log_file:
+                chunk_count_since_log = 0
+                screen = self._displayed.strip()
+                if screen and screen != self._last_screen_logged:
+                    ts = datetime.now().strftime("%H:%M:%S")
+                    self._log_file.write(f"[{ts}] {screen}\n")
+                    self._log_file.flush()
+                    self._last_screen_logged = screen
+                    print(f"[写盘] {self._save_path}")
 
             # 到时间了 → 推演
             chunk_count_since_transcribe += 1
@@ -642,35 +650,7 @@ class Transcriber:
             print(f"[识别] 转录错误: {e}")
             return
 
-        # ── 日志记录：积累到缓冲区，每 5 秒（或静音）才写入磁盘 ──
-        if cur_text.strip() and self._log_file:
-            prev = self._last_logged
-            ts = datetime.now().strftime("%H:%M:%S")
-            if not prev:
-                self._pending_log += f"[{ts}] {cur_text}\n"
-                self._last_logged = cur_text
-            else:
-                lcp = 0
-                for a, b in zip(prev, cur_text):
-                    if a == b: lcp += 1
-                    else: break
-                if lcp >= len(prev) * 0.4:
-                    suffix = cur_text[lcp:]
-                    if len(suffix) >= 2:
-                        self._pending_log += f"      + {suffix.lstrip()}\n"
-                    self._last_logged = cur_text
-                else:
-                    self._pending_log += f"[{ts}] {cur_text}\n"
-                    self._last_logged = cur_text
-
-            # 每 8 秒写入磁盘（final 也不破例，统一走定时器）
-            now = time.time()
-            if now - self._last_log_time >= 8.0:
-                self._log_file.write(self._pending_log)
-                self._log_file.flush()
-                print(f"[写盘] {len(self._pending_log)} 字节 → {self._save_path}")
-                self._pending_log = ""
-                self._last_log_time = now
+        # ── 日志：不在这里记，由定时器统一取屏幕内容写入 ──
         self._prev_text = cur_text
 
         if final:
